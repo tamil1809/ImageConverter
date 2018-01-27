@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "pplawait.h"
 #include "BitmapEncoderFactory.h"
 #include "BitmapConversionSettings.h"
 #include <concurrent_vector.h>
@@ -15,6 +16,55 @@ BitmapEncoderFactory::BitmapEncoderFactory()
 
 }
 
+task<BitmapConversionResult^> BitmapEncoderFactory::ConvertAsync(
+	StorageFile^ file,
+	IStorageFolder^ targetFolder,
+	BitmapConversionSettings^ settings)
+{
+	BitmapConversionResult^ result = ref new BitmapConversionResult();
+
+	// 1. Open input
+	auto inputStream = co_await file->OpenAsync(FileAccessMode::Read);
+
+	// 2. Create decoder
+	BitmapDecoder^ decoder;
+	try
+	{
+		decoder = co_await BitmapDecoder::CreateAsync(inputStream);
+	}
+	catch (Exception^ ex)
+	{
+		result->Status = "Could not decode file";
+		return result;
+	}
+	
+	// 3. Create output file
+	StorageFile^ outputFile; 
+	IRandomAccessStream^ outputStream;
+	try
+	{
+		outputFile = co_await targetFolder->CreateFileAsync(file->DisplayName + settings->FileExtension, settings->CollisionOption);
+		outputStream = co_await outputFile->OpenAsync(FileAccessMode::ReadWrite);
+	}
+	catch (Exception^ ex)
+	{
+		result->Status = "Could not create output file";
+		return result;
+	}
+	
+	// 4. Encode to output file
+	co_await EncodeInternalAsync(decoder, settings->EncoderId, outputStream, settings->Options);
+	delete decoder;
+	delete outputStream;
+
+	// 5. Get file size
+	auto properties = co_await outputFile->GetBasicPropertiesAsync();
+	result->ResultFileSize = properties->Size;
+	result->Success = true;
+
+	return result;
+}
+
 IAsyncOperation<BitmapConversionResult^>^  BitmapEncoderFactory::EncodeAsync(
 	StorageFile^ file,
 	IStorageFolder^ targetFolder,
@@ -22,61 +72,7 @@ IAsyncOperation<BitmapConversionResult^>^  BitmapEncoderFactory::EncodeAsync(
 {
 	return create_async([file, targetFolder, settings]
 		{
-			return create_task(file->OpenAsync(FileAccessMode::Read))
-			.then([file, settings, targetFolder](IRandomAccessStream^ inputStream)
-			{
-				BitmapConversionResult^ result = ref new BitmapConversionResult();
-				try
-				{
-					// 2. Try to decode file as an image
-					return create_task(BitmapDecoder::CreateAsync(inputStream))
-						.then([file, settings, targetFolder, result, inputStream](BitmapDecoder^ decoder)
-					{
-						delete inputStream;
-						try
-						{
-							// 3. Create output file
-							return create_task(targetFolder->CreateFileAsync(file->DisplayName + settings->FileExtension, settings->CollisionOption))
-								.then([settings, result, decoder](StorageFile^ outputFile)
-							{
-								// 4. Open output stream
-								return create_task(outputFile->OpenAsync(FileAccessMode::ReadWrite))
-									.then([settings, result, decoder, outputFile](IRandomAccessStream^ outputStream)
-								{
-									// 5. Encode
-									return create_task(EncodeInternalAsync(decoder, settings->EncoderId, outputStream, settings->Options))
-										.then([result, outputStream, outputFile, decoder]
-									{
-										delete decoder;
-										delete outputStream;
-
-										// 6. Get result file size
-										return create_task(outputFile->GetBasicPropertiesAsync())
-											.then([result](FileProperties::BasicProperties^ properties)
-										{
-											result->ResultFileSize = properties->Size;
-											result->Success = true;
-											return result;
-										}, task_continuation_context::use_arbitrary());
-									}, task_continuation_context::use_arbitrary());
-								}, task_continuation_context::use_arbitrary());
-							}, task_continuation_context::use_arbitrary());
-						}
-						catch (Exception^ ex)
-						{
-							result->Status = "Could not write to output file";
-							return task_from_result(result);
-						}
-
-					}, task_continuation_context::use_arbitrary());
-				}
-				catch (Exception^ ex)
-				{
-					result->Status = "Could not decode file";
-					return task_from_result(result);
-				}
-
-			}, task_continuation_context::use_arbitrary());
+			return ConvertAsync(file, targetFolder, settings);
 		}); 
 }
 

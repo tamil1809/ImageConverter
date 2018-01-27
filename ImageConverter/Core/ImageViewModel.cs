@@ -31,7 +31,6 @@ namespace ImageConverter.Common
             {
                 var props = await file.GetBasicPropertiesAsync().AsTask().ConfigureAwait(false);
                 double size = props.Size / 1024d / 1024d;
-
                 result.Add(new ImageViewModel(file, size));
             }
             return result;

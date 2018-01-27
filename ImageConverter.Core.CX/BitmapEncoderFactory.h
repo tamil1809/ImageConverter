@@ -24,6 +24,11 @@ namespace ImageConverter {
 			private:
 				BitmapEncoderFactory();
 
+				static concurrency::task<BitmapConversionResult^> ConvertAsync(
+					StorageFile^ file,
+					IStorageFolder^ targetFolder,
+					BitmapConversionSettings^ settings);
+
 				static IAsyncAction^ EncodeInternalAsync(
 					BitmapDecoder^ decoder,
 					Platform::Guid encoderId,
